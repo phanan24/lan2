@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chuyển PDF → Ảnh (PNG) — Offline</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 18px; background:#f7f8fb; color:#111;}
+    h1 { font-size: 20px; margin-bottom: 6px;}
+    .controls { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+    input[type=file] { padding:6px; }
+    button { padding:8px 12px; border-radius:8px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+    #pages { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
+    .page-card { background:#fff; padding:10px; border-radius:10px; box-shadow:0 1px 4px rgba(20,20,30,0.06); display:flex; flex-direction:column; gap:8px; }
+    canvas { width:100%; height:auto; border-radius:6px; background:#eee; }
+    .meta { font-size:13px; color:#444; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .small { font-size:12px; color:#666; }
+  </style>
+</head>
+<body>
+  <h1>Chuyển PDF → Ảnh (PNG) — Chạy trong trình duyệt</h1>
+  <div class="controls">
+    <input id="fileInput" type="file" accept="application/pdf" />
+    <label>Độ phân giải (dpi): <input id="dpiInput" type="number" value="150" min="50" max="600" style="width:80px" /></label>
+    <button id="convertBtn">Chuyển PDF</button>
+    <button id="downloadAllBtn" disabled>Tải tất cả (ZIP)</button>
+    <span class="small">Không cần server — mọi thứ chạy local</span>
+  </div>
+
+  <div id="status" class="small">Chưa có file.</div>
+  <div id="pages"></div>
+
+  <!-- PDF.js (cdn) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <!-- JSZip for zip download -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const convertBtn = document.getElementById('convertBtn');
+    const pagesContainer = document.getElementById('pages');
+    const status = document.getElementById('status');
+    const dpiInput = document.getElementById('dpiInput');
+    const downloadAllBtn = document.getElementById('downloadAllBtn');
+
+    // Cấu hình worker cho pdfjs
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+    let imagesBlobs = []; // lưu { filename, blob } để zip
+
+    convertBtn.addEventListener('click', async () => {
+      const file = fileInput.files[0];
+      if (!file) { alert('Chọn file PDF trước nhé.'); return; }
+
+      pagesContainer.innerHTML = '';
+      imagesBlobs = [];
+      downloadAllBtn.disabled = true;
+      status.textContent = 'Đang đọc file PDF...';
+
+      const arrayBuffer = await file.arrayBuffer();
+
+      try {
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+        const pdf = await loadingTask.promise;
+        const numPages = pdf.numPages;
+        status.textContent = `PDF có ${numPages} trang — đang chuyển...`;
+
+        for (let i = 1; i <= numPages; i++) {
+          const page = await pdf.getPage(i);
+
+          // Tính scale từ dpi
+          const dpi = Number(dpiInput.value) || 150;
+          // PDF mặc định viewport.scale ở 72dpi. scale = dpi / 72
+          const scale = dpi / 72;
+
+          const viewport = page.getViewport({ scale });
+          // Tạo canvas phù hợp kích thước thực
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.width = Math.round(viewport.width);
+          canvas.height = Math.round(viewport.height);
+
+          // Render page lên canvas
+          await page.render({ canvasContext: context, viewport }).promise;
+
+          // Hiển thị
+          const card = document.createElement('div');
+          card.className = 'page-card';
+          const title = document.createElement('div');
+          title.className = 'meta';
+          title.innerHTML = `<div>Trang ${i}</div><div class="small">${Math.round(viewport.width)}×${Math.round(viewport.height)} px</div>`;
+          card.appendChild(title);
+          card.appendChild(canvas);
+
+          // Nút download trang
+          const btnRow = document.createElement('div');
+          btnRow.style.display = 'flex';
+          btnRow.style.gap = '8px';
+          btnRow.style.justifyContent = 'flex-end';
+          const downloadBtn = document.createElement('button');
+          downloadBtn.textContent = 'Tải trang';
+          downloadBtn.addEventListener('click', async () => {
+            const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${file.name.replace(/\.[^.]+$/, '')}_page_${i}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          });
+          btnRow.appendChild(downloadBtn);
+          card.appendChild(btnRow);
+
+          pagesContainer.appendChild(card);
+
+          // Lưu blob cho download tất cả
+          const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+          imagesBlobs.push({ filename: `${file.name.replace(/\.[^.]+$/, '')}_page_${i}.png`, blob });
+          status.textContent = `Đã chuyển ${i}/${numPages} trang...`;
+        }
+
+        status.textContent = `Hoàn thành: ${imagesBlobs.length} ảnh tạo xong.`;
+        downloadAllBtn.disabled = imagesBlobs.length === 0;
+      } catch (err) {
+        console.error(err);
+        alert('Lỗi khi xử lý PDF: ' + err.message);
+        status.textContent = 'Lỗi khi xử lý PDF. Xem console.';
+      }
+    });
+
+    // Zip và tải tất cả
+    downloadAllBtn.addEventListener('click', async () => {
+      if (imagesBlobs.length === 0) return;
+      downloadAllBtn.disabled = true;
+      downloadAllBtn.textContent = 'Đang tạo ZIP...';
+      const zip = new JSZip();
+      for (const item of imagesBlobs) {
+        zip.file(item.filename, item.blob);
+      }
+      const content = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'pdf_images.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      downloadAllBtn.textContent = 'Tải tất cả (ZIP)';
+      downloadAllBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

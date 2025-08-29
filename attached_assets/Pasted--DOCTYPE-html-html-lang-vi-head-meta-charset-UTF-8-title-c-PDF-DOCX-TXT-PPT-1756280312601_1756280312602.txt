@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Đọc PDF / DOCX / TXT / PPTX</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://unpkg.com/mammoth/mammoth.browser.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    #viewer { margin-top: 20px; }
+    canvas { display: block; margin: 10px auto; border: 1px solid #ccc; }
+    pre { background: #f0f0f0; padding: 10px; border-radius: 4px; }
+    iframe { width: 100%; height: 600px; border: none; }
+  </style>
+</head>
+<body>
+  <h2>Trình đọc file PDF / DOCX / TXT / PPTX</h2>
+  <input type="file" id="file" />
+
+  <div id="viewer"></div>
+
+  <script>
+    const fileInput = document.getElementById("file");
+    const viewer = document.getElementById("viewer");
+
+    fileInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      viewer.innerHTML = "";
+
+      const ext = file.name.split(".").pop().toLowerCase();
+
+      if (ext === "pdf") {
+        const buf = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 1.2 });
+          const canvas = document.createElement("canvas");
+          viewer.appendChild(canvas);
+          const ctx = canvas.getContext("2d");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          await page.render({ canvasContext: ctx, viewport }).promise;
+        }
+      } else if (ext === "docx") {
+        const buf = await file.arrayBuffer();
+        const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+        viewer.innerHTML = result.value;
+      } else if (ext === "txt") {
+        const text = await file.text();
+        viewer.innerHTML = "<pre>" + text + "</pre>";
+      } else if (ext === "pptx") {
+        // tạo URL blob rồi nhúng bằng Google Docs Viewer
+        const url = URL.createObjectURL(file);
+        const iframe = document.createElement("iframe");
+        iframe.src = "https://docs.google.com/viewer?embedded=true&url=" + encodeURIComponent(url);
+        viewer.appendChild(iframe);
+      } else {
+        viewer.innerHTML = "<p>Định dạng không hỗ trợ!</p>";
+      }
+    });
+  </script>
+</body>
+</html>
